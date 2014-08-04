@@ -10,12 +10,13 @@ import com.hp.hpl.jena.sparql.sse.SSE
 
 package object sparql2flickr {
   def main(args : Array[String]) {
-    val query = "PREFIX vcard:      <http://www.l3s.de/sparql-flickr-people/1.0#> SELECT ?y ?givenName WHERE { ?y vcard:Family \"Smith\" . ?y vcard:Given  ?givenName . FILTER ( ?givenName < 20 ) }"
+    //val query = "PREFIX vcard:      <http://www.l3s.de/sparql-flickr-people/1.0#> SELECT ?y ?givenName WHERE { ?y vcard:Family \"Smith\" . ?y vcard:Given  ?givenName . FILTER ( ?givenName < 20 ) }"
+    val query = "PREFIX  dc:  <http://purl.org/dc/elements/1.1/>\nPREFIX  ns:  <http://example.org/ns#>\nSELECT  ?title ?price\nWHERE   { ?x ns:price ?price .\n          FILTER (?price < 30.5)\n          ?x dc:title ?title . }"
 
     val parsedQuery = QueryFactory.create(query)
     val op = Algebra.compile(parsedQuery)
     // print the sparql query in algebra notation
-    //SSE.write(op)
+    SSE.write(op)
 
     val visitor = new OpVisitorFlickr()
     OpWalker.walk(op, visitor)
