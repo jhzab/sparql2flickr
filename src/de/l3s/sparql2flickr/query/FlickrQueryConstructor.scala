@@ -19,10 +19,10 @@ class FlickrQueryConstructor {
 
     def handleTriple(t : Triple) {
       // this is the
-      //println(t.getSubject)
+      // println(t.getSubject)
       // this is basically the field we want to get
-      //println(t.getPredicate)
-      val predExp = """(.*)#(.*)""".r
+      println(t.getMatchPredicate)
+      val predExp = """(.*)[#/](.*)""".r
       // url defines what we operate on and elem tells us about the attribute we need to get/compare/filter
       val url, elem = predExp.findFirstIn(t.getPredicate.toString) match {
         case Some(predExp(u, e)) => (u, e)
