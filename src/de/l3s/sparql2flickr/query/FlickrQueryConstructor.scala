@@ -1,13 +1,13 @@
-package de.l3s.sparql2flickr
+package de.l3s.sparql2flickr.query
 
 /**
  * Created by gothos on 7/28/2014.
  */
 
-import scala.collection.JavaConversions._
-
-import com.hp.hpl.jena.sparql.algebra.op._
 import com.hp.hpl.jena.graph.Triple
+import com.hp.hpl.jena.sparql.algebra.op._
+
+import scala.collection.JavaConversions._
 
 /* Implement a queue. GET data with x=$y, filter x for something and output z */
 class FlickrQueryConstructor {
@@ -39,22 +39,26 @@ class FlickrQueryConstructor {
     }
 
     val patterns = op.getPattern.getList
-    patterns.foreach(x => handleTriple(x))
+    patterns foreach (x => handleTriple(x))
   }
 
   def addProject(op : OpProject) {
     val vars = op.getVars
-    vars.foreach(v => queue ::= "PRINT " + v.toString.replace("?", ""))
+    vars foreach (v => queue ::= "PRINT " + v.toString.replace("?", ""))
   }
 
   def addFilter(op : OpFilter) {
     val exprs = op.getExprs.getList
-    exprs.foreach(e => queue ::= "FILTER " + e.getVarName + " " + e.getFunction + " " + e.getConstant)
+    exprs foreach (e => queue ::= "FILTER " + e.getVarName + " " + e.getFunction + " " + e.getConstant)
   }
 
   def nextOp(op : Any) = op match  {
     case op:OpBGP => addBGP(op)
     case op:OpProject => addProject(op)
     case op:OpFilter => addFilter(op)
+  }
+
+  def handleGet() {
+
   }
 }

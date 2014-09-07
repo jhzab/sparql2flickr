@@ -1,7 +1,9 @@
-package de.l3s.sparql2flickr
+package de.l3s.sparql2flickr.query
 
-import com.hp.hpl.jena.sparql.algebra.{AlgebraQuad, OpVisitorBase}
+import com.hp.hpl.jena.sparql.algebra.OpVisitorBase
 import com.hp.hpl.jena.sparql.algebra.op._
+//import de.l3s.sparql2flickr.query.FlickrQueryConstructor
+
 import scala.collection.JavaConversions._
 
 //import de.l3s.sparql2flickr.FlickrQueryConstructor
