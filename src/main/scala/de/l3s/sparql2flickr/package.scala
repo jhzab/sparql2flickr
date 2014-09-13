@@ -14,7 +14,7 @@ import de.l3s.sparql2flickr.query.FlickrQueryExecutor
 package object sparql2flickr {
   def main(args : Array[String]) {
     //val query = "PREFIX vcard:      <http://www.l3s.de/sparql-flickr-people/1.0#> SELECT ?y ?givenName WHERE { ?y vcard:Family \"Smith\" . ?y vcard:Given  ?givenName . FILTER ( ?givenName < 20 ) }"
-    val query = "PREFIX  p:  <http://l3s.de/flickr/people#>\nSELECT  ?title ?price\nWHERE   { ?x p:price ?price .\n          FILTER (?price < 30.5)\n          ?x p:title ?title . }"
+    val query = "PREFIX  p:  <http://l3s.de/flickr/people#>\nSELECT  ?username ?price\nWHERE   { ?x p:price ?price .\n          FILTER (?price < 30.5)\n          ?x p:username ?username .\n ?x p:username \"zabjanhendrik\" . }"
 
     val parsedQuery = QueryFactory.create(query)
     val op = Algebra.compile(parsedQuery)

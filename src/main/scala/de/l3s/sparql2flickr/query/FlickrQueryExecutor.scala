@@ -61,16 +61,15 @@ class FlickrQueryExecutor(queue: List[Op]) {
     searchables
   }
 
-  def execute(debug : Boolean = false) : Unit = {
-    /*
-    1. Check that the predicates are supported
-    2. Check if we have a filter
-     - 2. a) Check if we can filter directly via the Flickr API
-    3. Check if we can "filter" the GET/BIND part via Flickr API
-     */
+  // return the corresponding search function in the Flickr API for the given
+  // obj and member of the predicate
+  def getFlickrFunc(obj : String, member : String) : String = {
+    "test"
+  }
 
+  def execute(debug : Boolean = false) : Unit = {
     // Check that the predicates are searchable via Flickr API
-    // and are actually correct predicates!
+    // TODO: and are actually correct predicates!
     val searchables = getSearchables
     if (searchables.size equals 0) {
       println("Searching isn't supported for any of the given predicates!")
@@ -80,6 +79,28 @@ class FlickrQueryExecutor(queue: List[Op]) {
     if (debug) {
       println(s"We found ${searchables.size} searchables:")
       searchables.foreach(x => println(s"\t${x}"))
+    }
+
+    // check that at least one GET command is a searchable
+    // otherwise there wont be any string etc. to search for!
+    var hasSearchableGet = false
+    for (e <- queue.filter(e => e.cmd equals "GET")) {
+      if (searchables.filter(m => m equals e.pred).size > 0) {
+        hasSearchableGet = true
+      }
+    }
+
+    if (!hasSearchableGet) {
+      println("No searchable predicate found in any GET command!")
+      return
+    }
+
+    // execute the GET part and dump the data in the database
+    for (e <- queue.filter(e => e.cmd equals "GET")) {
+      if (searchables.contains(e.pred)) {
+        val (obj, member) = getSepPred(e.pred)
+        val func = getFlickrFunc(obj, member)
+      }
     }
   }
 
