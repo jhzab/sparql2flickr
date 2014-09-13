@@ -7,11 +7,14 @@ package de.l3s
 import com.hp.hpl.jena.query._
 import com.hp.hpl.jena.sparql.algebra.{OpVisitor, OpWalker, Algebra}
 import com.hp.hpl.jena.sparql.sse.SSE
+import com.mongodb.casbah.Imports._
+import de.l3s.sparql2flickr.query.OpVisitorFlickr
+import de.l3s.sparql2flickr.query.FlickrQueryExecutor
 
 package object sparql2flickr {
   def main(args : Array[String]) {
     //val query = "PREFIX vcard:      <http://www.l3s.de/sparql-flickr-people/1.0#> SELECT ?y ?givenName WHERE { ?y vcard:Family \"Smith\" . ?y vcard:Given  ?givenName . FILTER ( ?givenName < 20 ) }"
-    val query = "PREFIX  dc:  <http://purl.org/dc/elements/1.1/>\nPREFIX  ns:  <http://example.org/ns#>\nSELECT  ?title ?price\nWHERE   { ?x ns:price ?price .\n          FILTER (?price < 30.5)\n          ?x dc:title ?title . }"
+    val query = "PREFIX  p:  <http://l3s.de/flickr/people#>\nSELECT  ?title ?price\nWHERE   { ?x p:price ?price .\n          FILTER (?price < 30.5)\n          ?x p:title ?title . }"
 
     val parsedQuery = QueryFactory.create(query)
     val op = Algebra.compile(parsedQuery)
@@ -20,6 +23,10 @@ package object sparql2flickr {
 
     val visitor = new OpVisitorFlickr()
     OpWalker.walk(op, visitor)
-    visitor.queryConstructor.queue.foreach(println)
+    //visitor.queryConstructor.queue.foreach(println)
+
+    val queryExecutor = new FlickrQueryExecutor(visitor.queryConstructor.queue)
+    queryExecutor.execute(debug=true)
+    val mongoClient = MongoClient("localhost", 27017)
   }
 }

@@ -6,20 +6,8 @@ import com.hp.hpl.jena.sparql.algebra.op._
 
 import scala.collection.JavaConversions._
 
-//import de.l3s.sparql2flickr.FlickrQueryConstructor
-
-/**
- * Created by gothos on 7/28/2014.
- */
 class OpVisitorFlickr extends OpVisitorBase  {
   var queryConstructor = new FlickrQueryConstructor()
-
-  /*
-   * not possible :'(
-  def visit(op : Any) = op match {
-    case op : OpBGP => queryConstructor.nextOp(op)
-  }
-  */
 
   override def visit(opBGP : OpBGP) {
     queryConstructor.nextOp(opBGP)
