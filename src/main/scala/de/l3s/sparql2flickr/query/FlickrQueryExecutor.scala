@@ -2,14 +2,22 @@ package de.l3s.sparql2flickr.query
 
 import scala.util.matching.Regex
 
+import de.l3s.flickr4scala.flickr._
+import de.l3s.flickr4scala.ConfigParser
+import java.io.File
+import java.lang.RuntimeException
+import com.mongodb.casbah.Imports._
+
 /**
  * This will use the actual Flickr API via Flickr4Scala
  */
-class FlickrQueryExecutor(queue: List[Op]) {
+class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
   var predicates : Map[String, List[String]] = Map()
+  val mongoClient = MongoClient("localhost", 27017)
+  val flickrDB = mongoClient("flickr")
+  val f = new ConfigParser(flickrConfig).init()
 
-  val peopleSearchOptions = List(
-  "username",
+  val peopleSearchOptions = List("username",
   "email"
   )
 
@@ -21,8 +29,16 @@ class FlickrQueryExecutor(queue: List[Op]) {
   "group_id"
   )
 
+  val groupSearchOptions = List(
+    "text"
+  )
+
   predicates += "people" -> peopleSearchOptions
   predicates += "photo" -> photoSearchOptions
+  predicates += "group" -> groupSearchOptions
+
+  var flickrFunctions : Map[String, String] = Map()
+  flickrFunctions += "people#user_id" -> "flickr.people.getInfo"
 
   def isGetOrBind(cmd : String): Boolean = {
     if (cmd equals "BIND")
@@ -36,14 +52,14 @@ class FlickrQueryExecutor(queue: List[Op]) {
     val predExp = """(.*)#(.*)""".r
     // check if the relevant part of the predicate is a
     // possible search option in the flickr API
-    val (_obj, _member) = predExp.findFirstIn(pred) match {
+    val (obj, member) = predExp.findFirstIn(pred) match {
       case Some(predExp(u, m)) => (u, m)
       // TODO: throw erroor here!
       case None => ("", "")
     }
 
     // TODO: obj needs to be only "people" etc.
-    (_obj, _member)
+    (obj, member)
   }
 
   def getSearchables : List[String] = {
@@ -67,6 +83,18 @@ class FlickrQueryExecutor(queue: List[Op]) {
     "test"
   }
 
+  def hasSearchableGet(searchables: List[String]): Boolean = {
+    // check that at least one GET command is a searchable
+    // otherwise there wont be any string etc. to search for!
+    var hasSearchableGet = false
+    for (e <- queue.filter(e => e.cmd equals "GET")) {
+      if (searchables.filter(m => m equals e.pred).size > 0) {
+        hasSearchableGet = true
+      }
+    }
+    hasSearchableGet
+  }
+
   def execute(debug : Boolean = false) : Unit = {
     // Check that the predicates are searchable via Flickr API
     // TODO: and are actually correct predicates!
@@ -78,30 +106,71 @@ class FlickrQueryExecutor(queue: List[Op]) {
 
     if (debug) {
       println(s"We found ${searchables.size} searchables:")
-      searchables.foreach(x => println(s"\t${x}"))
+      searchables.foreach(x => println(s" - ${x}"))
     }
 
-    // check that at least one GET command is a searchable
-    // otherwise there wont be any string etc. to search for!
-    var hasSearchableGet = false
-    for (e <- queue.filter(e => e.cmd equals "GET")) {
-      if (searchables.filter(m => m equals e.pred).size > 0) {
-        hasSearchableGet = true
-      }
-    }
-
-    if (!hasSearchableGet) {
+    if (!hasSearchableGet(searchables)) {
       println("No searchable predicate found in any GET command!")
       return
     }
 
     // execute the GET part and dump the data in the database
     for (e <- queue.filter(e => e.cmd equals "GET")) {
+      // TODO: optimize so search for multiple members at once! :)
       if (searchables.contains(e.pred)) {
         val (obj, member) = getSepPred(e.pred)
         val func = getFlickrFunc(obj, member)
+
+        if ((obj, member) equals ("people", "username")) {
+          val fr = f.call(methodName = "flickr.people.getInfo",
+            parameters = Map("user_id" -> getUserId(username = e.obj)))
+
+          addRespToMongo(obj, fr)
+        } else {
+
+        }
       }
     }
+  }
+
+  // get all predicates that can be searched with one flickr function together
+
+  // do the acctual search
+
+  // filter the values
+  // - either when saving
+  // - or when returning the data from the database
+
+  def getUserId(username: String = "", email: String = ""): String = {
+    try {
+      if (!(username equals "")) {
+        val resp = f.call(methodName = "flickr.people.findByUsername",
+          parameters = Map("username" -> username))
+        resp.id.asInstanceOf[String]
+      } else if (!(email equals "")) {
+        val resp = f.call(methodName = "flickr.people.findByEmail",
+          parameters = Map("find_email" -> email))
+        resp.id.asInstanceOf[String]
+      } else {
+        // FIXME: throw error
+        ""
+      }
+    } catch {
+      case e: RuntimeException => {
+        e.printStackTrace
+        e.toString
+      }
+    }
+  }
+
+  // fr is an element from the returned array
+  def addRespToMongo(obj: String, fr: FlickrResponse) = {
+    val coll = flickrDB(obj)
+    val mongoObj = MongoDBObject()
+
+    fr.map.foreach{case (k,v) => mongoObj += k -> v.asInstanceOf[String]}
+    fr.map.foreach{case (k,v) => println(s"k: ${k} v: ${v}")}
+    coll.insert(mongoObj)
   }
 
   /*

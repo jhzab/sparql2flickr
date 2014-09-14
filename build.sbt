@@ -14,6 +14,8 @@ libraryDependencies += "org.apache.jena" % "jena-arq" % "2.12.0"
 
 libraryDependencies += "org.mongodb" % "casbah-core_2.11" % "2.7.3"
 
+unmanagedBase := baseDirectory.value / "lib"
+
 libraryDependencies <++= (scalaVersion)(sv =>
   Seq(
     "org.scala-lang" % "scala-reflect" % "2.11.2",

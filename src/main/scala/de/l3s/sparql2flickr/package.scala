@@ -10,6 +10,7 @@ import com.hp.hpl.jena.sparql.sse.SSE
 import com.mongodb.casbah.Imports._
 import de.l3s.sparql2flickr.query.OpVisitorFlickr
 import de.l3s.sparql2flickr.query.FlickrQueryExecutor
+import java.io.File
 
 package object sparql2flickr {
   def main(args : Array[String]) {
@@ -25,8 +26,13 @@ package object sparql2flickr {
     OpWalker.walk(op, visitor)
     //visitor.queryConstructor.queue.foreach(println)
 
-    val queryExecutor = new FlickrQueryExecutor(visitor.queryConstructor.queue)
+    val queryExecutor = new FlickrQueryExecutor(visitor.queryConstructor.queue,
+      new File("/home/gothos/flickr_api.json"))
     queryExecutor.execute(debug=true)
-    val mongoClient = MongoClient("localhost", 27017)
+    var db = queryExecutor.flickrDB
+    val coll = db("people")
+    val allDocs = coll.find()
+    println( allDocs )
+for(doc <- allDocs) println( doc )
   }
 }
