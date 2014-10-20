@@ -11,7 +11,7 @@ import com.mongodb.casbah.Imports._
 /**
  * This will use the actual Flickr API via Flickr4Scala
  */
-class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
+class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = true) {
   var predicates : Map[String, List[String]] = Map()
   val mongoClient = MongoClient("localhost", 27017)
   val flickrDB = mongoClient("flickr")
@@ -40,6 +40,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
   var flickrFunctions : Map[String, String] = Map()
   flickrFunctions += "people#user_id" -> "flickr.people.getInfo"
 
+  def isGet(cmd: String) = if (cmd equals "GET") true else false
+
   def isGetOrBind(cmd : String): Boolean = {
     if (cmd equals "BIND")
       true
@@ -48,7 +50,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
     else false
   }
 
-  def getSepPred(pred : String) : (String, String) = {
+  def getSepPred(pred : String): (String, String) = {
     val predExp = """(.*)#(.*)""".r
     // check if the relevant part of the predicate is a
     // possible search option in the flickr API
@@ -62,14 +64,14 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
     (obj, member)
   }
 
-  def getSearchables : List[String] = {
-    var searchables = List[String]()
+  def getSearchables: List[(String, String)] = {
+    var searchables = List[(String, String)]()
 
     for (elem <- queue) {
-      if (isGetOrBind(elem.cmd)) {
+      if (isGet(elem.cmd)) {
         val (obj, member) = getSepPred(elem.pred)
         if (predicates(obj).contains(member)) {
-          searchables = elem.pred :: searchables
+          searchables = (obj, member) :: searchables
         }
       }
     }
@@ -79,23 +81,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
 
   // return the corresponding search function in the Flickr API for the given
   // obj and member of the predicate
-  def getFlickrFunc(obj : String, member : String) : String = {
+  def getFlickrFunc(obj : String, member : String): String = {
     "test"
   }
 
-  def hasSearchableGet(searchables: List[String]): Boolean = {
-    // check that at least one GET command is a searchable
-    // otherwise there wont be any string etc. to search for!
-    var hasSearchableGet = false
-    for (e <- queue.filter(e => e.cmd equals "GET")) {
-      if (searchables.filter(m => m equals e.pred).size > 0) {
-        hasSearchableGet = true
-      }
-    }
-    hasSearchableGet
-  }
-
-  def execute(debug : Boolean = false) : Unit = {
+  def execute: Unit = {
     // Check that the predicates are searchable via Flickr API
     // TODO: and are actually correct predicates!
     val searchables = getSearchables
@@ -109,11 +99,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
       searchables.foreach(x => println(s" - ${x}"))
     }
 
-    if (!hasSearchableGet(searchables)) {
-      println("No searchable predicate found in any GET command!")
-      return
-    }
-
+    var unsearchables: List[(String, String)] = Nil
     // execute the GET part and dump the data in the database
     for (e <- queue.filter(e => e.cmd equals "GET")) {
       // TODO: optimize so search for multiple members at once! :)
@@ -129,13 +115,18 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
         } else {
 
         }
+      } else {
+        // save unsearchable GETs to filter them later when the FILTER function is also applied
+        unsearchables = getSepPred(e.pred) :: unsearchables
       }
     }
+
+    // TODO: apply FILTER and unsearchable GETs
   }
 
   // get all predicates that can be searched with one flickr function together
 
-  // do the acctual search
+  // do the actual search
 
   // filter the values
   // - either when saving
@@ -169,6 +160,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File) {
     val mongoObj = MongoDBObject()
 
     fr.map.foreach{case (k,v) => mongoObj += k -> v.asInstanceOf[String]}
+    //debug
     fr.map.foreach{case (k,v) => println(s"k: ${k} v: ${v}")}
     coll.insert(mongoObj)
   }
