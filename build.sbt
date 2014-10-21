@@ -1,6 +1,8 @@
 name := "sparql2flickr"
 
-version := "0.1"
+organization := "de.l3s"
+
+version := "0.1.0-SNAPSHOT"
 
 scalaVersion := "2.11.2"
 
@@ -22,3 +24,5 @@ libraryDependencies <++= (scalaVersion)(sv =>
     "org.scala-lang" % "scala-compiler" % "2.11.2"
   )
 )
+
+libraryDependencies += "de.l3s" %% "flickr4scala" % "0.1.0-SNAPSHOT"
