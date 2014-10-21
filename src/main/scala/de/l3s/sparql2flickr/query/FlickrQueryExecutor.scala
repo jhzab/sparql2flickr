@@ -37,6 +37,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   predicates += "photo" -> photoSearchOptions
   predicates += "group" -> groupSearchOptions
 
+  // TODO: create a map that has all searchable objects in a list mapped to the flickr method
+  // funcs()
   var flickrFunctions : Map[String, String] = Map()
   flickrFunctions += "people#user_id" -> "flickr.people.getInfo"
 
@@ -65,8 +67,13 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   }
 
   def getSearchables: List[(String, String)] = {
-    var searchables = List[(String, String)]()
+    //var searchables = List[(String, String)]()
 
+    val searchables = queue.filter(e => isGet(e.cmd)).map(
+      e => getSepPred(e.pred)).filter(
+        e => predicates(e._1).contains(e._2))
+
+    /*
     for (elem <- queue) {
       if (isGet(elem.cmd)) {
         val (obj, member) = getSepPred(elem.pred)
@@ -75,6 +82,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         }
       }
     }
+     */
 
     searchables
   }
