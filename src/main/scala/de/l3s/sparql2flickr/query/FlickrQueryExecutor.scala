@@ -43,6 +43,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   predicates += "photos" -> photoSearchOptions
   predicates += "groups" -> groupSearchOptions
 
+  val mapping = Map("username" -> "user_id")
+
   var searchables = Map[String, List[String]]()
   var unsearchables = List[Op]()
   var filter = List[Op]()
@@ -117,23 +119,30 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     for (op <- getGETCommands) {
       val (obj, member) = getSepPred(op)
-      if (debug)
-        println(s"Adding ${op.obj} to unsearchables")
-      unsearchables :+ op
       // this goes through all the functions in predicates(obj)
       for (f <- predicates(obj).keys) {
         println(s"looking for ${f}")
+        // or if a mapping for the member exists!
         if (predicates(obj)(f).contains(member)) {
           if (searchables.contains(f))
             // FIXME: do we need this?
             searchables(f) +: member
-          else {
+          else
             searchables += f -> List(member)
-          }
-
-          unsearchables = unsearchables.filterNot(elem => elem == op)
+        } else if (predicates(obj)(f).contains(mapping(member))) {
+          if (searchables.contains(f))
+            // FIXME: do we need this?
+            searchables(f) +: member
+          else
+            searchables += f -> List(member)
+        } else {
+          if (debug)
+            println(s"Found unsearchable: ${}")
+          unsearchables :+ op
         }
       }
+
+      searchables
     }
 
     return searchables
@@ -147,16 +156,43 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       return unsearchables
   }
 
+  /*
+   * This method tranforms the input obj into a new obj value for another
+   * (mapped) param.
+   */
+  def getMappedObj(param: String, obj: String) = (param, obj) match {
+    case ("username", username) => getUserId(username=username)
+    case (_, _) => obj
+  }
+
+  /*
+   * This method gets the list of parameters for the Flickr API call and also
+   * creates necessary mappingg of members and executes additional API calls as
+   * needed.
+   */
   def getParamsForFunc(func: String, searchables: Map[String, List[String]]): Map[String, String] = {
     var result = Map[String, String]()
 
     for(param <- searchables(func)) {
-      result += param -> getGETCommands.filter(c => c.pred.contains(param)).map(c => c.obj).head
+      if (mapping.contains(param)) {
+        if (debug)
+          println(s"Execute mapping for: ${param}")
+        val mappedParam = mapping(param)
+        val obj = getGETCommands.filter(
+          c => c.pred.contains(param)).map(c => c.obj).head
+        val mappedObj = getMappedObj(param, obj)
+        result += mappedParam -> mappedObj
+      } else
+        result += param -> getGETCommands.filter(
+          c => c.pred.contains(param)).map(c => c.obj).head
     }
 
     result
   }
 
+  /**
+    *  This method returns a list of all bind operations.
+    */
   def getBindOps: List[Op] = queue.filter(op => isBind(op))
 
   /**
@@ -167,8 +203,17 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   def applyFilters: Unit = {
     /* this is a filter for the BIND ops including the BINDs for searchable
      * elements */
-    val fields = MongoDBObject(getBindOps.map(op => op.obj -> 1))
+    val fieldMapping = getBindOps.map(op => op.obj -> 1).filterNot(m => mapping.contains(m._1))
+    // now add the mappings for the removed originals
+    // FIXME: create another mapping since input and output mappings differ...
+    val test = getBindOps.filter(op => mapping.contains(op.obj)).map(op => mapping(op.obj) -> 1)
+    val fields = MongoDBObject(fieldMapping ++ test)
 
+    if (debug) {
+      println("Filter fields:")
+
+      println(fieldMapping ++ test ++ test2)
+    }
     println("unsearchables: " + unsearchables)
     for (pred <- predicates.keys) {
       val mongoColl = flickrDB(pred)
@@ -208,8 +253,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     for (func <- searchables.keys) {
       val parameters = getParamsForFunc(func, searchables)
 
-      if (debug)
+      if (debug) {
+        println("Parameters:")
+        println(parameters)
         println(s"Calling function: ${func}")
+      }
 
       val resp = f.call(methodName = func, parameters)
       if (!resp.map.contains("code"))
@@ -260,6 +308,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     val coll = flickrDB(obj)
     val mongoObj = MongoDBObject()
 
+    // FIXME: this only saves data in map not in data array!
     val filterList = List("stat")
     fr.map.filterNot(elem => filterList.contains(elem)).foreach{
       case (k,v) => mongoObj += k -> v.asInstanceOf[String]}
