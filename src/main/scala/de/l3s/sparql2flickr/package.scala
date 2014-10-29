@@ -15,7 +15,9 @@ import java.io.File
 package object sparql2flickr {
   def main(args : Array[String]) {
     //val query = "PREFIX vcard:      <http://www.l3s.de/sparql-flickr-people/1.0#> SELECT ?y ?givenName WHERE { ?y vcard:Family \"Smith\" . ?y vcard:Given  ?givenName . FILTER ( ?givenName < 20 ) }"
-    val query = "PREFIX  p:  <http://l3s.de/flickr/people#>\nSELECT  ?username ?price\nWHERE   { ?x p:price ?price .\n          FILTER (?price < 30.5)\n          ?x p:username ?username .\n ?x p:username \"zabjanhendrik\" . }"
+//    val query = "PREFIX  p:  <http://l3s.de/flickr/people#>\nSELECT  ?username ?price\nWHERE   { ?x p:price ?price .\n          FILTER (?price < 30.5)\n          ?x p:username ?username .\n ?x p:username \"zabjanhendrik\" . }"
+
+    val query = "PREFIX p: <http://l3s.de/flickr/photos#>\nSELECT ?tags \n WHERE { ?x p:tags ?tags .\n?x p:username \"zabjanhendrik\" . }"
 
     val parsedQuery = QueryFactory.create(query)
     val op = Algebra.compile(parsedQuery)
@@ -29,11 +31,5 @@ package object sparql2flickr {
     val queryExecutor = new FlickrQueryExecutor(visitor.queryConstructor.queue,
       new File("/home/gothos/flickr_api.json"), debug = true)
     queryExecutor.execute
-    return
-    var db = queryExecutor.flickrDB
-    val coll = db("people")
-    val allDocs = coll.find()
-    println( allDocs )
-for(doc <- allDocs) println( doc )
   }
 }

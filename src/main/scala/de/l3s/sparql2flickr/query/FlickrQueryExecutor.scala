@@ -31,7 +31,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     "max_taken_date",
     "min_upload_date",
     "max_upload_date",
-    "group_id"
+    "group_id",
+    "text"
   ))
 
   val groupSearchOptions = Map("flickr.groups.search" -> List(
@@ -39,8 +40,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   ))
 
   predicates += "people" -> peopleSearchOptions
-  predicates += "photo" -> photoSearchOptions
-  predicates += "group" -> groupSearchOptions
+  predicates += "photos" -> photoSearchOptions
+  predicates += "groups" -> groupSearchOptions
 
   var searchables = Map[String, List[String]]()
   var unsearchables = List[Op]()
@@ -95,6 +96,12 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   }
 
   /**
+    * Only return the name of the member specified in the SPARQL query, i.e.:
+    * only return 'username' when 'people#username' was specified.
+    */
+  def getMemberName(op: Op): String = getSepPred(op)._2
+
+  /**
     * Returns true if there is at least one searchable element in the query,
     * false otherwise.
     */
@@ -110,6 +117,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     for (op <- getGETCommands) {
       val (obj, member) = getSepPred(op)
+      if (debug)
+        println(s"Adding ${op.obj} to unsearchables")
       unsearchables :+ op
       // this goes through all the functions in predicates(obj)
       for (f <- predicates(obj).keys) {
@@ -148,20 +157,31 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
+  def getBindOps: List[Op] = queue.filter(op => isBind(op))
+
   /**
     *  This method will do the filtering for all GET commands that could not be
-    *  searched for via Flickr API.
+    *  searched for via Flickr API and apply all the FILTER functions given in
+    *  the SPARQL query
     */
-  def filterUnsearchables: Unit = {
-    /* build a select query here for all the data we need, output only the part in the BINDs */
-    val builder = MongoDBObject.newBuilder
-    builder += "username" -> "zabjanhendrik"
-    val query = builder.result
-    println("query: " + query)
-  }
+  def applyFilters: Unit = {
+    /* this is a filter for the BIND ops including the BINDs for searchable
+     * elements */
+    val fields = MongoDBObject(getBindOps.map(op => op.obj -> 1))
 
-  def applyFilter: Unit = {
+    println("unsearchables: " + unsearchables)
+    for (pred <- predicates.keys) {
+      val mongoColl = flickrDB(pred)
+      val queryData = unsearchables.filter(
+        op => op.pred.contains(pred)).map(
+          op => getMemberName(op) -> op.obj)
 
+      println("Query data: " + queryData)
+      val query = MongoDBObject(queryData)
+      for (x <- mongoColl.find(query, fields)) {
+        println(x)
+      }
+    }
   }
 
   /**
@@ -201,7 +221,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         printResp(resp)
 
       // FILTER DATA
-      filterUnsearchables
+      applyFilters
     }
 
     // TODO: apply FILTER and unsearchable GETs
