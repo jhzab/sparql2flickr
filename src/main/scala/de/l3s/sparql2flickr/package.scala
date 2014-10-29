@@ -29,6 +29,7 @@ package object sparql2flickr {
     val queryExecutor = new FlickrQueryExecutor(visitor.queryConstructor.queue,
       new File("/home/gothos/flickr_api.json"), debug = true)
     queryExecutor.execute
+    return
     var db = queryExecutor.flickrDB
     val coll = db("people")
     val allDocs = coll.find()
