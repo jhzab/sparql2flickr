@@ -12,30 +12,36 @@ import com.mongodb.casbah.Imports._
  * This will use the actual Flickr API via Flickr4Scala
  */
 class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = true) {
-  var predicates : Map[String, List[String]] = Map()
+  var predicates = Map[String, Map[String, List[String]]]()
   val mongoClient = MongoClient("localhost", 27017)
   val flickrDB = mongoClient("flickr")
   val f = new ConfigParser(flickrConfig).init()
 
-  val peopleSearchOptions = List("username",
-  "email"
-  )
+  val peopleSearchOptions = Map("flickr.people.findByEmail" -> List(
+    "find_email"
+  ),
+  "flickr.people.finyByUsername" -> List("username"))
 
-  val photoSearchOptions = List(
-  "user_id",
-  "owner",
-  "min_taken_date",
-  "max_taken_date",
-  "group_id"
-  )
+  val photoSearchOptions = Map("flickr.photos.search" -> List(
+    "user_id",
+    "owner",
+    "text",
+    "min_taken_date",
+    "max_taken_date",
+    "min_upload_date",
+    "max_upload_date",
+    "group_id"
+  ))
 
-  val groupSearchOptions = List(
+  val groupSearchOptions = Map("flickr.groups.search" -> List(
     "text"
-  )
+  ))
 
   predicates += "people" -> peopleSearchOptions
   predicates += "photo" -> photoSearchOptions
   predicates += "group" -> groupSearchOptions
+
+  val searchFunctions = Map()
 
   // TODO: create a map that has all searchable objects in a list mapped to the flickr method
   // funcs()
@@ -66,24 +72,28 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     (obj, member)
   }
 
-  def getSearchables: List[(String, String)] = {
-    //var searchables = List[(String, String)]()
+  def getSearchablesByMethod: Map[String, List[String]] = {
+    var searchables = Map[String, List[String]]()
+    val functions = predicates.flatMap(_._2).flatMap(_._1)
+    // obj, member
+    val gets = queue.filter(e => isGet(e.pred)).map(e => getSepPred(e.pred))
 
+    for ((obj, member) <- gets) {
+      if (predicates(obj).flatMap(_._2).contains(member)) {
+
+      }
+    }
+    for (f <- functions) {
+
+    }
+
+    searchables
+  }
+
+  def getSearchables: List[(String, String)] = {
     val searchables = queue.filter(e => isGet(e.cmd)).map(
       e => getSepPred(e.pred)).filter(
         e => predicates(e._1).contains(e._2))
-
-    /*
-    for (elem <- queue) {
-      if (isGet(elem.cmd)) {
-        val (obj, member) = getSepPred(elem.pred)
-        if (predicates(obj).contains(member)) {
-          searchables = (obj, member) :: searchables
-        }
-      }
-    }
-     */
-
     searchables
   }
 
