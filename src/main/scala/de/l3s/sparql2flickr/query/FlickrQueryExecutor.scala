@@ -21,7 +21,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   val peopleSearchOptions = Map("flickr.people.findByEmail" -> List(
     "find_email"
   ),
-  "flickr.people.finyByUsername" -> List("username"))
+  "flickr.people.findByUsername" -> List("username"))
 
   val photoSearchOptions = Map("flickr.photos.search" -> List(
     "user_id",
@@ -42,19 +42,30 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   predicates += "photo" -> photoSearchOptions
   predicates += "group" -> groupSearchOptions
 
-  val searchFunctions = Map()
+  var searchables = Map[String, List[String]]()
+  var unsearchables = List[Op]()
+  var filter = List[Op]()
 
-  // TODO: create a map that has all searchable objects in a list mapped to the flickr method
-  // funcs()
-  var flickrFunctions : Map[String, String] = Map()
-  flickrFunctions += "people#user_id" -> "flickr.people.getInfo"
-
-  def isGetOrBind(cmd: String): Boolean = {
-    if (cmd equals "BIND")
+  def isGetOrBind(op: Op): Boolean = {
+    if (op.cmd equals "BIND")
       true
-    else if (cmd equals "GET")
+    else if (op.cmd equals "GET")
       true
     else false
+  }
+
+  def isGet(op: Op): Boolean = {
+    if (op.cmd equals "GET")
+      true
+    else
+      false
+  }
+
+  def isBind(op: Op): Boolean = {
+    if (op.cmd equals "BIND")
+      true
+    else
+      false
   }
 
   def getGETCommands = queue.filter(op => isGet(op))
@@ -83,30 +94,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     (obj, member)
   }
 
-  def getSearchablesByMethod: Map[String, List[String]] = {
-    var searchables = Map[String, List[String]]()
-    val functions = predicates.flatMap(_._2).flatMap(_._1)
-    // obj, member
-    val gets = queue.filter(e => isGet(e.pred)).map(e => getSepPred(e.pred))
-
-    for ((obj, member) <- gets) {
-      if (predicates(obj).flatMap(_._2).contains(member)) {
-
-      }
-    }
-    for (f <- functions) {
-
-    }
-
-    searchables
-  }
-
-  def getSearchables: List[(String, String)] = {
-    val searchables = queue.filter(e => isGet(e.cmd)).map(
-      e => getSepPred(e.pred)).filter(
-        e => predicates(e._1).contains(e._2))
-    searchables
-
+  /**
+    * Returns true if there is at least one searchable element in the query,
+    * false otherwise.
+    */
   def hasSearchables: Boolean = getSearchablesByMethod.nonEmpty
 
   /**
@@ -114,35 +105,63 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     * This will allow the application to aggregate calls to this function
     */
   def getSearchablesByMethod: Map[String, List[String]] = {
-    var searchables = Map[String, List[String]]()
+    if (searchables.nonEmpty)
+      return searchables
 
     for (op <- getGETCommands) {
       val (obj, member) = getSepPred(op)
-
-      for (f <- predicates(obj)) {
+      unsearchables :+ op
+      // this goes through all the functions in predicates(obj)
+      for (f <- predicates(obj).keys) {
         println(s"looking for ${f}")
-        if (flickrFunctions(f).contains(member))
+        if (predicates(obj)(f).contains(member)) {
           if (searchables.contains(f))
             // FIXME: do we need this?
             searchables(f) +: member
           else {
             searchables += f -> List(member)
           }
+
+          unsearchables = unsearchables.filterNot(elem => elem == op)
+        }
       }
     }
 
     return searchables
   }
 
-  def getParamsForFunc(func: String): Map[String, String] = {
+  def getUnsearchables: List[Op] = {
+    if (unsearchables.nonEmpty) {
+      return unsearchables
+    } else
+      getSearchablesByMethod
+      return unsearchables
+  }
+
+  def getParamsForFunc(func: String, searchables: Map[String, List[String]]): Map[String, String] = {
     var result = Map[String, String]()
 
-    for(param <- getSearchablesByMethod(func)) {
-//      getGETCommands.filter(c => c.pred.contains(param)).map(c => c.obj)
+    for(param <- searchables(func)) {
       result += param -> getGETCommands.filter(c => c.pred.contains(param)).map(c => c.obj).head
     }
 
     result
+  }
+
+  /**
+    *  This method will do the filtering for all GET commands that could not be
+    *  searched for via Flickr API.
+    */
+  def filterUnsearchables: Unit = {
+    /* build a select query here for all the data we need, output only the part in the BINDs */
+    val builder = MongoDBObject.newBuilder
+    builder += "username" -> "zabjanhendrik"
+    val query = builder.result
+    println("query: " + query)
+  }
+
+  def applyFilter: Unit = {
+
   }
 
   /**
@@ -155,6 +174,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     if (!hasSearchables) {
       println("Searching isn't supported for any of the given predicates!")
+      // FIXME: throw error!
       return
     }
 
@@ -165,13 +185,23 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     }
 
     /* automatically call all the functions corresponding to the GET ops */
-    for (s <- searchables.keys) {
-      val parameters = getParamsForFunc(s)
-      println(s"Calling function: ${s}")
-      val resp = f.call(methodName = s, parameters)
-      addRespToMongo(getObjFromFunc(s), resp)
+    for (func <- searchables.keys) {
+      val parameters = getParamsForFunc(func, searchables)
+
+      if (debug)
+        println(s"Calling function: ${func}")
+
+      val resp = f.call(methodName = func, parameters)
+      if (!resp.map.contains("code"))
+        addRespToMongo(getObjFromFunc(func), resp)
+      else
+        println("Error occured, number: " + resp.code)
+
       if (debug)
         printResp(resp)
+
+      // FILTER DATA
+      filterUnsearchables
     }
 
     // TODO: apply FILTER and unsearchable GETs
@@ -211,9 +241,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     val mongoObj = MongoDBObject()
 
     val filterList = List("stat")
-    fr.map.filterNot(elem => filterList.contains(elem)).foreach{case (k,v) => mongoObj += k -> v.asInstanceOf[String]}
+    fr.map.filterNot(elem => filterList.contains(elem)).foreach{
+      case (k,v) => mongoObj += k -> v.asInstanceOf[String]}
     if (debug)
-      fr.map.filterNot(elem => filterList.contains(elem)).foreach{case (k,v) => println(s"k: ${k} v: ${v}")}
+      fr.map.filterNot(elem => filterList.contains(elem)).foreach{
+        case (k,v) => println(s"k: ${k} v: ${v}")}
     coll.insert(mongoObj)
   }
 
