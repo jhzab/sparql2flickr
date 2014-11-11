@@ -152,7 +152,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     for (op <- getGETCommands) {
       val (obj, member) = getSepPred(op)
-      // this goes through all the functions in predicates(obj)
+      // this goes through all the functions in predicates
       for (f <- predicates(obj).keys) {
         println(s"looking for ${f}")
         // or if a mapping for the member exists!
@@ -162,6 +162,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
             searchables(f) :+ member
           else
             searchables += f -> List(member)
+        // mapping part
         } else if (predicates(obj)(f).contains(inputMapping(member))) {
           if (searchables.contains(f))
             // FIXME: do we need this?
@@ -228,6 +229,37 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
+  def getMappedParamsForFunc(func: String): Map[String,String] = {
+    var result = Map[String, String]().empty
+
+    for (param <- searchables(func)) {
+      if (inputMapping.contains(param)) {
+        val v = getGETCommands.filter(
+          c => c.pred.contains(param)
+        ).map(c => c.obj).head
+        result += param -> v
+      }
+    }
+
+    result
+  }
+
+  /**
+    * The checkOutputFields method checks if all the requested output
+    * fields are actually binded to a value
+    *
+    * Is this actually part of the shitty SPARQL query standard?
+    */
+  def checkOutputFields: Boolean = {
+    val binds = getBindOps
+    for (field <- getPrintOps.map(op => op.obj)) {
+      if (!binds.exists(op => op.obj == field))
+        return false
+    }
+
+    return true
+  }
+
   /**
     * The getFieldsObj method returns the MongoDBObject needed to
     * limit the number of "elements" returned by the MongoDB query.
@@ -235,22 +267,14 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     * query for nested SELECT statements.
     */
   def getFieldsObj: MongoDBObject = {
-    /* this is a filter for the BIND ops including the BINDs for searchable
-     * elements */
-    val fieldMapping = getBindOps.map(op => op.obj -> 1).filterNot(
-      m => outputMapping.contains(m._1))
-    // now add the mappings for the removed originals
-    // FIXME: create another mapping since input and output mappings differ...
-    val outputTransform = getBindOps.filter(op => outputMapping.contains(op.obj)).map(
-      op => outputMapping(getMemberName(op)) -> 1)
+    // list of fields, excluding all those that need to be mapped to another value
+    val fields = getPrintOps.map(op => op.obj)
 
     if (debug) {
       println("Filter fields:")
-      println(fieldMapping ++ outputTransform)
-      println("unsearchables: " + unsearchables)
+      println(fields)
     }
-
-    MongoDBObject(fieldMapping ++ outputTransform)
+    MongoDBObject(fields.map(f => f -> 1))
   }
 
   /* getFilterObj returns a MongoDBObject which is configured for a
@@ -281,6 +305,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       return
     }
 
+    if (!checkOutputFields) {
+      println("Not all output fields are bound to a variable!")
+      return
+    }
+
     if (debug) {
       val numSearchables = searchables.toList.size
       println(s"We found ${numSearchables} searchables:")
@@ -290,6 +319,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     /* automatically call all the functions corresponding to the GET ops */
     for (func <- searchables.keys) {
       val parameters = getParamsForFunc(func, searchables)
+      println("Get mapped params:")
+      println(getMappedParamsForFunc(func))
 
       if (debug) {
         println("Parameters:")
@@ -297,7 +328,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         println(s"Calling function: ${func}")
       }
 
-      val resp = f.call(methodName = func, parameters)
+      val resp = f.call(methodName = func, parameters ++ getMappedParamsForFunc(func))
       if (!resp.map.contains("code"))
         addRespToMongo(getObjFromFunc(func), resp)
       else
@@ -306,8 +337,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       if (debug)
         printResp(resp)
     }
-
-    // TODO: apply FILTER and unsearchable GETs
   }
 
   def printResp(resp: FlickrResponse): Unit = {
@@ -394,19 +423,15 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
    * possibility to fetch as much data as he wants.
    */
   def getResults(format: String = "json") {
+    // if the query is a "SELECT * ..." fields will be empty which
+    // will result in all the data being returned
     val fields = getFieldsObj
-    val filter = getFilterObj("")
+    val filter = getFilterObj("photos")
 
-    val coll = flickrDB("")
+    val coll = flickrDB("photos")
 
-    coll.find(filter, fields)
+    for (f <- coll.find(filter, fields)) {
+      println(f)
+    }
   }
 }
-
-
-
-
-
-
-
-
