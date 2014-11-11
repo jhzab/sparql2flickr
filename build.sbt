@@ -4,7 +4,7 @@ organization := "de.l3s"
 
 version := "0.1.0-SNAPSHOT"
 
-scalaVersion := "2.11.2"
+scalaVersion := "2.11.4"
 
 libraryDependencies += "com.fasterxml.jackson.core" % "jackson-databind" % "2.4.2"
 
