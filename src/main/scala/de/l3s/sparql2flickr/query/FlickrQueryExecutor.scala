@@ -7,11 +7,15 @@ import de.l3s.flickr4scala.ConfigParser
 import java.io.File
 import java.lang.RuntimeException
 import com.mongodb.casbah.Imports._
+import scala.util.Random
 
 /**
  * This will use the actual Flickr API via Flickr4Scala
  */
 class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = true) {
+  // identifier for the query, this might become a map, if we get
+  // multiple queries in each other
+  val ident = new Random().nextString(8)
   var predicates = Map[String, Map[String, List[String]]]()
 
   val mongoClient = MongoClient("localhost", 27017)
@@ -39,9 +43,24 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     "text"
   ))
 
+  val contactSearchoption = Map("flickr.contacts.getPublicList" -> List(
+    "user_id"
+  ))
+
+  val gallerieSearchOption = Map("flickr.galleries.getLis" -> List(
+    "user_id"
+  ))
+
+  val commentSearchOption = Map("flickr.photos.comments.getList" -> List(
+    "photo_id"
+  ))
+
   predicates += "people" -> peopleSearchOptions
   predicates += "photos" -> photoSearchOptions
   predicates += "groups" -> groupSearchOptions
+  predicates += "contacts" -> contactSearchoption
+  predicates += "gallerie" -> gallerieSearchOption
+  predicates += "comment" -> commentSearchOption
 
   /* we basically pretend that i.e. username is an element of photo, even tho
    * you can only search for the "user_id" and get an "owner" returned
@@ -50,7 +69,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
    */
   val inputMapping = Map("username" -> "user_id")
   // this is a mapping to get the user the wished results
-  val outputMapping = Map("user_id" -> "owner")
+  val outputMapping = Map("username" -> "owner")
 
   var searchables = Map[String, List[String]]()
   var unsearchables = List[Op]()
@@ -64,22 +83,23 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     else false
   }
 
-  def isGet(op: Op): Boolean = {
-    if (op.cmd equals "GET")
-      true
-    else
-      false
-  }
-
-  def isBind(op: Op): Boolean = {
-    if (op.cmd equals "BIND")
-      true
-    else
-      false
-  }
+  def isGet(op: Op) = if (op.cmd equals "GET") true else false
+  def isBind(op: Op) = if (op.cmd equals "BIND") true else false
+  def isPrint(op: Op) = if (op.cmd equals "PRINT") true else false
 
   def getGETCommands = queue.filter(op => isGet(op))
 
+  def getPrintOps = queue.filter(op => isPrint(op))
+
+  /**
+    *  This method returns a list of all bind operations.
+    */
+  def getBindOps: List[Op] = queue.filter(op => isBind(op))
+
+  /**
+    * The method will return the 'photos' part from the function
+    * string 'flickr.photos.search'.
+    */
   def getObjFromFunc(func: String): String = {
     val objExp = """\w+\.(\w+)\.\w""".r
     val obj = objExp.findFirstIn(func) match {
@@ -90,13 +110,17 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     obj
   }
 
+  /**
+    * getSepPred returns a tuple consisting of the object and the
+    * member of a predicate. i.e.: photos#text => (photos,text)
+    */
   def getSepPred(op: Op): (String, String) = {
     val predExp = """(.*)#(.*)""".r
     // check if the relevant part of the predicate is a
     // possible search option in the flickr API
     val (obj, member) = predExp.findFirstIn(op.pred) match {
       case Some(predExp(u, m)) => (u, m)
-      // TODO: throw erroor here!
+      // TODO: throw error here!
       case None => ("", "")
     }
 
@@ -117,8 +141,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   def hasSearchables: Boolean = getSearchablesByMethod.nonEmpty
 
   /**
-    * getSearchblesByMethod will return a list of functions mapped to search elements.
-    * This will allow the application to aggregate calls to this function
+    * getSearchblesByMethod will return a list of functions mapped to search
+    * elements.
+    * This will allow the application to aggregate calls to this function.
+    * It also takes into account mapping like username -> user_id.
     */
   def getSearchablesByMethod: Map[String, List[String]] = {
     if (searchables.nonEmpty)
@@ -143,8 +169,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
           else
             searchables += f -> List(member)
         } else {
-          if (debug)
-            println(s"Found unsearchable: ${}")
+          if (debug) {
+            println(s"Found unsearchable:")
+            println(unsearchables)
+          }
           unsearchables :+ op
         }
       }
@@ -155,12 +183,15 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     return searchables
   }
 
+  /**
+    * getUnsearchables returns a list of Ops that can't be searched
+    * via Flickrs REST API.
+    */
   def getUnsearchables: List[Op] = {
-    if (unsearchables.nonEmpty) {
-      return unsearchables
-    } else
+    if (unsearchables.isEmpty)
       getSearchablesByMethod
-      return unsearchables
+
+      unsearchables
   }
 
   /*
@@ -174,7 +205,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
   /*
    * This method gets the list of parameters for the Flickr API call and also
-   * creates necessary mappingg of members and executes additional API calls as
+   * creates necessary mapping of members and executes additional API calls as
    * needed.
    */
   def getParamsForFunc(func: String, searchables: Map[String, List[String]]): Map[String, String] = {
@@ -198,43 +229,42 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   }
 
   /**
-    *  This method returns a list of all bind operations.
+    * The getFieldsObj method returns the MongoDBObject needed to
+    * limit the number of "elements" returned by the MongoDB query.
+    * FIXME: This should also be dynamic in regards of the part of the
+    * query for nested SELECT statements.
     */
-  def getBindOps: List[Op] = queue.filter(op => isBind(op))
-
-  /**
-    *  This method will do the filtering for all GET commands that could not be
-    *  searched for via Flickr API and apply all the FILTER functions given in
-    *  the SPARQL query.
-    */
-  def applyFilters: Unit = {
+  def getFieldsObj: MongoDBObject = {
     /* this is a filter for the BIND ops including the BINDs for searchable
      * elements */
-    val fieldMapping = getBindOps.map(op => op.obj -> 1).filterNot(m => inputMapping.contains(m._1))
+    val fieldMapping = getBindOps.map(op => op.obj -> 1).filterNot(
+      m => outputMapping.contains(m._1))
     // now add the mappings for the removed originals
     // FIXME: create another mapping since input and output mappings differ...
-    val test = getBindOps.filter(op => inputMapping.contains(op.obj)).map(op => inputMapping(op.obj) -> 1)
-    val fields = MongoDBObject(fieldMapping ++ test)
+    val outputTransform = getBindOps.filter(op => outputMapping.contains(op.obj)).map(
+      op => outputMapping(getMemberName(op)) -> 1)
 
     if (debug) {
       println("Filter fields:")
-
-      println(fieldMapping ++ test)
+      println(fieldMapping ++ outputTransform)
+      println("unsearchables: " + unsearchables)
     }
-    println("unsearchables: " + unsearchables)
-    for (pred <- predicates.keys) {
-      val mongoColl = flickrDB(pred)
-      val queryData = unsearchables.filter(
-        op => op.pred.contains(pred)).map(
-          op => getMemberName(op) -> op.obj)
 
-      println("Query data: " + queryData)
-      val query = MongoDBObject(queryData)
-//      for (x <- mongoColl.find(query, fields)) {
-      for (x <- mongoColl.find(query)) {
-        println(x)
-      }
-    }
+    MongoDBObject(fieldMapping ++ outputTransform)
+  }
+
+  /* getFilterObj returns a MongoDBObject which is configured for a
+   * collection to search for all remaining subjects.
+   */
+  def getFilterObj(pred: String): MongoDBObject = {
+    val queryData = unsearchables.filter(
+      op => op.pred.contains(pred)).map(
+      op => getMemberName(op) -> op.obj) :+ "ident" -> ident
+
+    val mongoObj = MongoDBObject.empty
+    queryData.foreach(d => mongoObj += d)
+
+    mongoObj
   }
 
   /**
@@ -275,9 +305,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
       if (debug)
         printResp(resp)
-
-      // FILTER DATA
-      applyFilters
     }
 
     // TODO: apply FILTER and unsearchable GETs
@@ -289,6 +316,9 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     }
   }
 
+  /*
+   *  Get user_id from username or email address.
+   */
   def getUserId(username: String = "", email: String = ""): String = {
     try {
       if (!(username equals "")) {
@@ -311,38 +341,72 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     }
   }
 
-  // fr is an element from the returned array
+  /**
+    * 'fr' is the complete FlickrResponse received by the Flickr API.
+    * addRespToMongo will flatten the response and add the relevant
+    * data to the database.
+    *
+    * TODO: filter out unneeded data!
+    */
   def addRespToMongo(obj: String, fr: FlickrResponse) = {
     val coll = flickrDB(obj)
-    val filterList = List("stat")
+    val filterList = List("stat", "_id")
 
+    // save resp with no array
     if (fr.data.isEmpty) {
-      val mongoObj = MongoDBObject()
-      fr.map.filterNot(elem => filterList.contains(elem)).foreach{
-        case (k,v) => mongoObj += k -> v.asInstanceOf[String]}
-      if (debug)
-        fr.map.filterNot(elem => filterList.contains(elem)).foreach{
-          case (k,v) => println(s"k: ${k} v: ${v}")}
-      coll.insert(mongoObj)
+      insertResp(coll, fr)
+      // save resp with array
     } else {
-      // FIXME: apply filter as above!
+      // FIXME: we assume that there is only one array, mostly true tho
       for (elem <- fr.data.head._2) {
-        val mongoObj = MongoDBObject()
-        elem.map.filterNot(e => e._1.contains("_id")).foreach{
-          case (k,v) => mongoObj += k->v.asInstanceOf[String]}
-        coll.insert(mongoObj)
-        if (debug)
-          elem.map.foreach{
-            case (k,v) => println(s"k: ${k} v: ${v}")}
+        insertResp(coll, elem)
       }
     }
+  }
+
+  /**
+    * The insertResp() method saves the returned FlickrResponse to the
+    * database and filters out some useless elements.
+    */
+  def insertResp(coll: MongoCollection, fr: FlickrResponse) = {
+    val filterList = List("stat", "_id")
+    val mongoObj = MongoDBObject()
+
+    if (fr.map.isEmpty)
+      println("Received empty FlickrResponse to save to db!")
+
+    fr.ident = ident
+    fr.map.filterNot(elem => filterList.contains(elem)).foreach{
+      case (k,v) => mongoObj += k -> v.asInstanceOf[String]
+    }
+
+    /*
+    if (debug)
+      fr.map.filterNot(elem => filterList.contains(elem)).foreach{
+        case (k,v) => println(s"k: ${k} v: ${v}")}
+     */
+
+    coll.insert(mongoObj)
   }
 
   /*
    * This should return an iterator of some kind to give the user the
    * possibility to fetch as much data as he wants.
    */
-  def getResults() {
+  def getResults(format: String = "json") {
+    val fields = getFieldsObj
+    val filter = getFilterObj("")
 
+    val coll = flickrDB("")
+
+    coll.find(filter, fields)
   }
 }
+
+
+
+
+
+
+
+
