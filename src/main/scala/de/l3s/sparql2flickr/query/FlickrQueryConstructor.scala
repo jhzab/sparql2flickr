@@ -41,9 +41,25 @@ class FlickrQueryConstructor {
     }
 
     val patterns = op.getPattern.getList
-      // println(t.getSubject)
-      // this is basically the field we want to get
     patterns foreach (x => handleTriple(x))
+  }
+
+  def addGroup(op: OpGroup) {
+    for (aggr <- op.getAggregators()) {
+      val tempVar = aggr.getAggVar.toString
+      val namedVar = aggr.getAggregator.getExpr.toString
+
+      queue ::= new Op("AGGR", subj=tempVar, obj=namedVar,
+        func=aggr.getAggregator.toString.replace("(" + namedVar + ")", ""))
+    }
+  }
+
+  def addExtend(op: OpExtend) {
+    for (m <- op.getVarExprList.getExprs) {
+      val tempVar = m._2.toString
+      val namedVar = m._1.toString
+      queue ::= new Op("EXTBIND", subj=tempVar, obj=namedVar)
+    }
   }
 
   def addProject(op : OpProject) {
@@ -60,10 +76,12 @@ class FlickrQueryConstructor {
       ))
   }
 
-  def nextOp(op : Any) = op match  {
+  def nextOp(op : Any) = op match {
     case op:OpBGP => addBGP(op)
     case op:OpProject => addProject(op)
     case op:OpFilter => addFilter(op)
+    case op:OpGroup => addGroup(op)
+    case op:OpExtend => addExtend(op)
   }
 
   def handleGet() {

@@ -63,11 +63,11 @@ class OpVisitorFlickr extends OpVisitorBase  {
   }
 
   override def visit(opGroup : OpGroup) {
-    println("Group: " + opGroup.getName)
+    queryConstructor.nextOp(opGroup)
   }
 
   override def visit(opExtend : OpExtend) {
-    println("Extend: " + opExtend.getName)
+    queryConstructor.nextOp(opExtend)
   }
 
   override def visit(opSlice : OpSlice) {

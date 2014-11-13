@@ -333,15 +333,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         addRespToMongo(getObjFromFunc(func), resp)
       else
         println("Error occured, number: " + resp.code)
-
-      if (debug)
-        printResp(resp)
-    }
-  }
-
-  def printResp(resp: FlickrResponse): Unit = {
-    for (elem <- resp.map.keys) {
-      println(s"elem: ${elem} value: ${resp.map(elem)}")
     }
   }
 
@@ -432,6 +423,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     for (f <- coll.find(filter, fields)) {
       println(f)
+
+      println(f.get("tags"))
     }
   }
 }
