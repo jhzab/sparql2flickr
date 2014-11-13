@@ -86,6 +86,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   def isGet(op: Op) = if (op.cmd equals "GET") true else false
   def isBind(op: Op) = if (op.cmd equals "BIND") true else false
   def isPrint(op: Op) = if (op.cmd equals "PRINT") true else false
+  def isExtBind(op: Op) = if (op.cmd equals "EXTBIND") true else false
 
   def getGETCommands = queue.filter(op => isGet(op))
 
@@ -95,6 +96,13 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     *  This method returns a list of all bind operations.
     */
   def getBindOps: List[Op] = queue.filter(op => isBind(op))
+
+  /**
+    * This method returns a list of all extend bind operations. Those
+    * are operations that bind a variable to the output of an
+    * aggregate function.
+    */
+  def getExtBindOps: List[Op] = queue.filter(op =>isExtBind(op))
 
   /**
     * The method will return the 'photos' part from the function
@@ -244,17 +252,30 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
+  // TODO: well, write the method...
+  def checkForProperExtBind(fieldVar: String): Boolean = {
+    true
+  }
+
   /**
     * The checkOutputFields method checks if all the requested output
-    * fields are actually binded to a value
+    * fields are actually bound to a value
     *
     * Is this actually part of the shitty SPARQL query standard?
+
+    * TODO: Extend check to compensate for aggregate functions!
+    *       basically search also in the EXTBIND part
     */
   def checkOutputFields: Boolean = {
     val binds = getBindOps
+    val extBinds = getExtBindOps
     for (field <- getPrintOps.map(op => op.obj)) {
       if (!binds.exists(op => op.obj == field))
-        return false
+        if (!extBinds.exists(op => op.obj == field))
+          return false
+        else
+          if (!checkForProperExtBind(field))
+            return false
     }
 
     return true
@@ -274,7 +295,9 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       println("Filter fields:")
       println(fields)
     }
-    MongoDBObject(fields.map(f => f -> 1))
+    // also generally exclude the '_id' field, it's useless for us!
+    // TODO: check if this works
+    MongoDBObject(fields.map(f => f -> 1) ++ Map("_id" -> 0))
   }
 
   /* getFilterObj returns a MongoDBObject which is configured for a
@@ -365,10 +388,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     * 'fr' is the complete FlickrResponse received by the Flickr API.
     * addRespToMongo will flatten the response and add the relevant
     * data to the database.
-    *
-    * TODO: filter out unneeded data!
     */
-  def addRespToMongo(obj: String, fr: FlickrResponse) = {
+   def addRespToMongo(obj: String, fr: FlickrResponse) = {
     val coll = flickrDB(obj)
     val filterList = List("stat", "_id")
 
@@ -412,6 +433,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   /*
    * This should return an iterator of some kind to give the user the
    * possibility to fetch as much data as he wants.
+   *
+   * TODO: Take into account the aggregate functions!
    */
   def getResults(format: String = "json") {
     // if the query is a "SELECT * ..." fields will be empty which

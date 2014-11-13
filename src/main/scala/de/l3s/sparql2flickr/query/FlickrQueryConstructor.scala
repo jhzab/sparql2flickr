@@ -49,7 +49,7 @@ class FlickrQueryConstructor {
       val tempVar = aggr.getAggVar.toString
       val namedVar = aggr.getAggregator.getExpr.toString
 
-      queue ::= new Op("AGGR", subj=tempVar, obj=namedVar,
+      queue ::= new Op("AGGR", subj=tempVar, obj=namedVar.replace("?", ""),
         func=aggr.getAggregator.toString.replace("(" + namedVar + ")", ""))
     }
   }
@@ -58,10 +58,11 @@ class FlickrQueryConstructor {
     for (m <- op.getVarExprList.getExprs) {
       val tempVar = m._2.toString
       val namedVar = m._1.toString
-      queue ::= new Op("EXTBIND", subj=tempVar, obj=namedVar)
+      queue ::= new Op("EXTBIND", subj=tempVar, obj=namedVar.replace("?", ""))
     }
   }
 
+  // this creates the PRINT ops for all the aggregate functions
   def addProject(op : OpProject) {
     val vars = op.getVars
     vars foreach (v => queue ::= new Op("PRINT", obj = v.toString.replace("?", "")))
