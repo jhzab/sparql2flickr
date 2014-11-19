@@ -87,10 +87,13 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   def isBind(op: Op) = if (op.cmd equals "BIND") true else false
   def isPrint(op: Op) = if (op.cmd equals "PRINT") true else false
   def isExtBind(op: Op) = if (op.cmd equals "EXTBIND") true else false
+  def isAggr(op: Op) = if (op.cmd equals "AGGR") true else false
 
   def getGETCommands = queue.filter(op => isGet(op))
-
+  def getAggrOps = queue.filter(op => isAggr(op))
   def getPrintOps = queue.filter(op => isPrint(op))
+
+  def hasAggregates = getAggrOps.nonEmpty
 
   /**
     *  This method returns a list of all bind operations.
@@ -237,6 +240,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
+  /**
+    * The getMappedparamsForFunc method returns a map of (param ->
+    * value) arguments for a specific function of the Flickr REST API.
+    */
   def getMappedParamsForFunc(func: String): Map[String,String] = {
     var result = Map[String, String]().empty
 
@@ -252,8 +259,29 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
-  // TODO: well, write the method...
-  def checkForProperExtBind(fieldVar: String): Boolean = {
+  def checkForProperExtBind(printVar: String): Boolean = {
+    // list of Ops binding a PRINT variable to a temp variable like ?.0
+    val extBinds = getExtBindOps.filter(op => op.obj == printVar)
+
+    for (bindOp <- extBinds) {
+      // list of temp variables like ?.0 to a function and a variable
+      // name from the where clause
+      val aggrOps = getAggrOps.filter(op => op.subj == bindOp.subj)
+
+      if (aggrOps.size > 1) {
+        println("Too many bindings from EXTBIND to AGGR.")
+        return false
+      }
+
+      if (aggrOps.size == 0)
+        return false
+
+      // FIXME: what if it isn't a bind to obj but to subj?
+      if (!getBindOps.exists(op => op.obj == aggrOps.head.obj)) {
+        return false
+      }
+    }
+
     true
   }
 
@@ -292,11 +320,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     val fields = getPrintOps.map(op => op.obj)
 
     if (debug) {
-      println("Filter fields:")
+      println("Fields:")
       println(fields)
     }
     // also generally exclude the '_id' field, it's useless for us!
-    // TODO: check if this works
     MongoDBObject(fields.map(f => f -> 1) ++ Map("_id" -> 0))
   }
 
@@ -310,6 +337,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     val mongoObj = MongoDBObject.empty
     queryData.foreach(d => mongoObj += d)
+
+    if (debug) {
+      println("Filters:")
+      println(queryData.toMap.keys)
+    }
 
     mongoObj
   }
@@ -386,8 +418,9 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
   /**
     * 'fr' is the complete FlickrResponse received by the Flickr API.
-    * addRespToMongo will flatten the response and add the relevant
-    * data to the database.
+    * addRespToMongo will etiher split the response if there is an
+    * array with embedded FlickrResponse's or leave it as it is and
+    * call insertResp(...)
     */
    def addRespToMongo(obj: String, fr: FlickrResponse) = {
     val coll = flickrDB(obj)
@@ -407,25 +440,26 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
   /**
     * The insertResp() method saves the returned FlickrResponse to the
-    * database and filters out some useless elements.
+    * database collection and filters out some useless elements.
     */
   def insertResp(coll: MongoCollection, fr: FlickrResponse) = {
     val filterList = List("stat", "_id")
-    val mongoObj = MongoDBObject()
+    var mongoObj = MongoDBObject()
 
     if (fr.map.isEmpty)
       println("Received empty FlickrResponse to save to db!")
 
+    // set the query identifier in the FlickrResponse
     fr.ident = ident
-    fr.map.filterNot(elem => filterList.contains(elem)).foreach{
-      case (k,v) => mongoObj += k -> v.asInstanceOf[String]
+
+    fr.map.filterNot(elem => filterList.contains(elem._1)).foreach{
+      case (k,v) => mongoObj += k -> getMongoDBObj(k, v.asInstanceOf[String]).get(k)
     }
 
-    /*
+
     if (debug)
-      fr.map.filterNot(elem => filterList.contains(elem)).foreach{
+      fr.map.filterNot(elem => filterList.contains(elem._1)).foreach{
         case (k,v) => println(s"k: ${k} v: ${v}")}
-     */
 
     coll.insert(mongoObj)
   }
@@ -441,13 +475,58 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     // will result in all the data being returned
     val fields = getFieldsObj
     val filter = getFilterObj("photos")
-
     val coll = flickrDB("photos")
 
-    for (f <- coll.find(filter, fields)) {
-      println(f)
+    if (hasAggregates) {
+      val ret = coll.aggregate(MongoDBObject(
+        "$group" -> MongoDBObject(
+          "_id" -> "$id",
+          "test" -> MongoDBObject("$sum" -> "$server")
+        )))
 
-      println(f.get("tags"))
+      println("print coll:")
+      for (x <- ret.results) {
+        println(x)
+      }
+
+    } else {
+      for (f <- coll.find(filter, fields)) {
+        println(f)
+        println(f.get("tags")) }
     }
+  }
+
+  /* Type conversion with automatic conversion to Option[T] */
+  case class ParseOp[T](op: String => T)
+  implicit val popDouble = ParseOp[Double](_.toDouble)
+  implicit val popInt = ParseOp[Int](_.toInt)
+
+  def parse[T: ParseOp](s: String): Option[T] = try {
+    Some(implicitly[ParseOp[T]].op(s))
+  } catch {
+    case _: RuntimeException => None
+  }
+
+  /**
+    * getMongoDBObj will try to find the actual type of the data in
+    * the data value and call createMongoDBObj to create the fitting
+    * MongoDBObject with the obtained type information.
+    */
+  def getMongoDBObj(attr: String, data: String): MongoDBObject = {
+    if (parse[Double](data) != None) {
+      return createMongoDBObj[Double](attr, parse[Double](data).get)
+    }
+
+    if (parse[Int](data) != None) {
+      return createMongoDBObj[Int](attr, parse[Int](data).get)
+    }
+
+    return createMongoDBObj[String](attr, data)
+  }
+
+  def createMongoDBObj[T](attr: String, data: T): MongoDBObject = {
+//    println(data.getClass())
+//    println(data)
+    return MongoDBObject(attr -> data)
   }
 }
