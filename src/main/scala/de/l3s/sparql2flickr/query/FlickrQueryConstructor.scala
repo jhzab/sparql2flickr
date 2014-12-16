@@ -32,12 +32,15 @@ class FlickrQueryConstructor {
 
       //println(s"obj: ${obj} member: ${member}")
       if (t.getMatchObject.toString.startsWith("\""))
-        queue ::= new Op("GET", pred = s"${obj}#${member}",
-          obj = t.getObject.toString.replace("\"", ""))
+        //queue ::= new Op("GET", pred = s"${obj}#${member}",
+        //  obj = t.getObject.toString.replace("\"", ""))
+        queue ::= GetOp(obj, member, t.getObject.toString.replace("\"",""))
       else
-        queue ::= new Op("BIND", pred = s"${obj}#${member}",
-          obj = t.getObject.toString.replace("?", ""),
-          subj = t.getSubject.getName)
+        //queue ::= new Op("BIND", pred = s"${obj}#${member}",
+        //  obj = t.getObject.toString.replace("?", ""),
+        //  subj = t.getSubject.getName)
+        queue ::= BindOp(obj, member,
+          t.getObject.toString.replace("?", ""), t.getSubject.getName)
     }
 
     val patterns = op.getPattern.getList
@@ -46,38 +49,39 @@ class FlickrQueryConstructor {
 
   def addGroup(op: OpGroup) {
     for (v <- op.getGroupVars().getVars()) {
-      queue ::= new Op("GROUP", obj=v.toString)
+      queue ::= GroupOp(member=v.toString)
     }
 
     for (aggr <- op.getAggregators()) {
       val tempVar = aggr.getAggVar.toString
       val namedVar = aggr.getAggregator.getExpr.toString
 
-      queue ::= new Op("AGGR", subj=tempVar, obj=namedVar.replace("?", ""),
+      queue ::= AggrOp(subj=tempVar, member=namedVar.replace("?", ""),
         func=aggr.getAggregator.toString.replace("(" + namedVar + ")", ""))
     }
   }
 
+  // TODO: there should be an extended GET and BIND op
   def addExtend(op: OpExtend) {
     for (m <- op.getVarExprList.getExprs) {
       val tempVar = m._2.toString
       val namedVar = m._1.toString
-      queue ::= new Op("EXTBIND", subj=tempVar, obj=namedVar.replace("?", ""))
+      queue ::= ExtBindOp(subj=tempVar, member=namedVar.replace("?", ""))
     }
   }
 
   // this creates the PRINT ops for all the aggregate functions
   def addProject(op : OpProject) {
     val vars = op.getVars
-    vars foreach (v => queue ::= new Op("PRINT", obj = v.toString.replace("?", "")))
+    vars foreach (v => queue ::= PrintOp(member=v.toString.replace("?", "")))
   }
 
   def addFilter(op : OpFilter) {
     val exprs = op.getExprs.getList
-    exprs foreach (e => queue ::= new Op("FILTER",
-      obj = e.getVarsMentioned.head.toString.replace("?", ""),
+    exprs foreach (e => queue ::= FilterOp(
+      member = e.getVarsMentioned.head.toString.replace("?", ""),
       func = e.getFunction.getOpName,
-      value = e.getFunction.getArg(2).toString
+      arg = e.getFunction.getArg(2).toString
       ))
   }
 
