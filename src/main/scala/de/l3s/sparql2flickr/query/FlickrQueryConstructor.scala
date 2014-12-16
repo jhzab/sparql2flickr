@@ -45,6 +45,10 @@ class FlickrQueryConstructor {
   }
 
   def addGroup(op: OpGroup) {
+    for (v <- op.getGroupVars().getVars()) {
+      queue ::= new Op("GROUP", obj=v.toString)
+    }
+
     for (aggr <- op.getAggregators()) {
       val tempVar = aggr.getAggVar.toString
       val namedVar = aggr.getAggregator.getExpr.toString

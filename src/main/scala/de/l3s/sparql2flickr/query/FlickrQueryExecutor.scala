@@ -7,6 +7,7 @@ import de.l3s.flickr4scala.ConfigParser
 import java.io.File
 import java.lang.RuntimeException
 import com.mongodb.casbah.Imports._
+import com.mongodb.casbah.Cursor
 import scala.util.Random
 
 /**
@@ -21,6 +22,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   val mongoClient = MongoClient("localhost", 27017)
   val flickrDB = mongoClient("flickr")
   val f = new ConfigParser(flickrConfig).init()
+  var random = false
+  /* a function that receives to integers, the first is the number of
+   * all pages, the second is the number of the last page retrieved */
+  var randFunc: (Int, Int) => Int = null
 
   val peopleSearchOptions = Map("flickr.people.findByEmail" -> List(
     "find_email"
@@ -88,12 +93,18 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   def isPrint(op: Op) = if (op.cmd equals "PRINT") true else false
   def isExtBind(op: Op) = if (op.cmd equals "EXTBIND") true else false
   def isAggr(op: Op) = if (op.cmd equals "AGGR") true else false
+  def isGroup(op: Op) = if (op.cmd equals "GROUP") true else false
 
   def getGETCommands = queue.filter(op => isGet(op))
   def getAggrOps = queue.filter(op => isAggr(op))
   def getPrintOps = queue.filter(op => isPrint(op))
 
   def hasAggregates = getAggrOps.nonEmpty
+
+  /**
+    * This method returns a list of all group operations.
+    */
+  def getGroupOps: List[Op] = queue.filter(op => isGroup(op))
 
   /**
     *  This method returns a list of all bind operations.
@@ -119,6 +130,14 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     }
 
     obj
+  }
+
+  /**
+    *  The setRandomizedCalls methods configures with which algorithm
+    *  the library retrieved data randomly from the API
+    */
+  def setRandomizedCalls(f: (Int, Int) => Int): Unit = {
+
   }
 
   /**
@@ -259,6 +278,42 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
+  /**
+    * This method will return the name of the variable a function
+    * associated to 'printVar' is applied on.
+    */
+  def getAttrNameFromExtBind(printVar: String): Option[Op] = {
+    // list of Ops binding a PRINT variable to a temp variable like ?.0
+    val extBindOps = getExtBindOps.filter(op => op.obj == printVar)
+
+    if (extBindOps.size > 1) {
+      println("Error: Number of extended binds is higher than one!")
+      return Option(null)
+    }
+
+    if (extBindOps.size == 0) {
+      println("Error: Number of extended binds is zero!")
+      return Option(null)
+    }
+
+    val aggrOps = getAggrOps.filter(op => op.subj == extBindOps.head.subj)
+
+    if (aggrOps.size > 1) {
+      println("Error: Number of aggregates for given variable name is higher than one!")
+      return Option(null)
+    }
+
+    if (aggrOps.size == 0) {
+      println("Error: Number of aggregates for given variable name is zero!")
+      return Option(null)
+    }
+
+    val aggr = aggrOps.head
+    val bindOps = getBindOps.filter(op => op.obj == aggr.obj)
+
+    Option(bindOps.head)
+  }
+
   def checkForProperExtBind(printVar: String): Boolean = {
     // list of Ops binding a PRINT variable to a temp variable like ?.0
     val extBinds = getExtBindOps.filter(op => op.obj == printVar)
@@ -290,9 +345,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     * fields are actually bound to a value
     *
     * Is this actually part of the shitty SPARQL query standard?
-
-    * TODO: Extend check to compensate for aggregate functions!
-    *       basically search also in the EXTBIND part
     */
   def checkOutputFields: Boolean = {
     val binds = getBindOps
@@ -381,13 +433,34 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         println("Parameters:")
         println(parameters)
         println(s"Calling function: ${func}")
+        if (random) {
+          println("Using random data retrieval function.")
+        }
       }
+      var resp = new FlickrResponse()
 
-      val resp = f.call(methodName = func, parameters ++ getMappedParamsForFunc(func))
+      if (random) {
+        // get the total number of return values
+        val testResp = f.call(methodName = func,
+          parameters ++ getMappedParamsForFunc(func) ++ Map("per_page" -> "1"))
+        val total = testResp.total.asInstanceOf[String].toInt
+        println(s"Total: ${total}")
+        val perPage = 1
+
+        // get the data
+        while (randFunc(total, 1) < total) {
+          val nextPage = randFunc(total, 1)
+          resp = f.callPage(methodName = func,
+            parameters ++ getMappedParamsForFunc(func) ++ Map(
+              "per_page" -> perPage.toString), new FlickrResponse(), nextPage)
+        }
+      } else
+        resp = f.call(methodName = func, parameters ++ getMappedParamsForFunc(func))
+
       if (!resp.map.contains("code"))
-        addRespToMongo(getObjFromFunc(func), resp)
-      else
-        println("Error occured, number: " + resp.code)
+          addRespToMongo(getObjFromFunc(func), resp)
+        else
+          println("Error occured, number: " + resp.code)
     }
   }
 
@@ -456,7 +529,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       case (k,v) => mongoObj += k -> getMongoDBObj(k, v.asInstanceOf[String]).get(k)
     }
 
-
     if (debug)
       fr.map.filterNot(elem => filterList.contains(elem._1)).foreach{
         case (k,v) => println(s"k: ${k} v: ${v}")}
@@ -467,33 +539,57 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   /*
    * This should return an iterator of some kind to give the user the
    * possibility to fetch as much data as he wants.
-   *
-   * TODO: Take into account the aggregate functions!
    */
-  def getResults(format: String = "json") {
+  def getResults(format: String = "json"): Option[Iterator[DBObject]] = {
+    val collName = getSepPred(getGETCommands.head)._1
     // if the query is a "SELECT * ..." fields will be empty which
     // will result in all the data being returned
     val fields = getFieldsObj
-    val filter = getFilterObj("photos")
-    val coll = flickrDB("photos")
+    val filter = getFilterObj(collName)
 
+    var cursor: Option[Iterator[DBObject]] = Option(null)
+    /* we assume only one collection per query is used, this could be
+     * extended in a future work
+     */
+    val coll = flickrDB(collName)
+
+    /* with aggregates */
+    /* what we need: the output name, the function, the orginal
+     * value/(variable name) to apply the function on */
     if (hasAggregates) {
-      val ret = coll.aggregate(MongoDBObject(
-        "$group" -> MongoDBObject(
-          "_id" -> "$id",
-          "test" -> MongoDBObject("$sum" -> "$server")
-        )))
+      for (aggr <- getAggrOps) {
+        val func = aggr.func.toLowerCase
+        val outputName = getExtBindOps.filter(op => op.subj == aggr.subj).head.obj
+        val attrName = getAttrNameFromExtBind(outputName).get.obj
+        println(s"func: ${func} outputName: ${outputName} attrName: ${attrName}")
 
-      println("print coll:")
-      for (x <- ret.results) {
-        println(x)
+        val groupVar = getGroupOps.head.obj
+        val aggregationOptions = AggregationOptions(AggregationOptions.CURSOR)
+        val ret = coll.aggregate(List(MongoDBObject(
+          "$group" -> MongoDBObject(
+            "_id" -> ("$" + groupVar),
+            outputName -> MongoDBObject(("$" + func) -> ("$" + attrName))
+          ))),
+        aggregationOptions)
+
+        println("print coll:")
+        for (x <- ret) {
+          println(x)
+        }
+
+        cursor = Option(ret)
       }
-
+    /* without aggregates */
     } else {
       for (f <- coll.find(filter, fields)) {
         println(f)
-        println(f.get("tags")) }
+        println(f.get("tags"))
+      }
+
+      cursor = Option(coll.find(filter, fields))
     }
+
+    return Option(null)
   }
 
   /* Type conversion with automatic conversion to Option[T] */
@@ -525,8 +621,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   }
 
   def createMongoDBObj[T](attr: String, data: T): MongoDBObject = {
-//    println(data.getClass())
-//    println(data)
     return MongoDBObject(attr -> data)
   }
 }
