@@ -12,6 +12,8 @@ abstract sealed class Op() {
       println(s"Arguments of ${className}")
     args.foreach{ case (k,v) => println(s"- arg: ${k} - val: ${v}") }
   }
+
+  def print(): Unit = println("Abstract class Op.")
 }
 
 case class GroupOp(val member: String) extends Op {
@@ -32,6 +34,7 @@ case class ExtBindOp(val subj: String, val member: String) extends Op {
 case class PrintOp(val member: String) extends Op {
     def print(): Unit = printHelper(Map("member" -> member), this.getClass().getName())
 }
+
 // obj is always the part before the "#" like poeple, member is the
 // name of a member of the obj like "username"
 case class BindOp(val obj: String, val member: String, val variable: String,
