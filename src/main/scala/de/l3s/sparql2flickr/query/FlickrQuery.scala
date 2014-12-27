@@ -20,6 +20,6 @@ class FlickrQuery(debug: Boolean = false) {
   def getPrintOps():List[PrintOp] = getOps[PrintOp]()
   def getGetOps(): List[GetOp] = getOps[GetOp]()
   def getFilterOps(): List[FilterOp] = getOps[FilterOp]()
-  def getExtBindops():List[ExtBindOp] = getOps[ExtBindOp]()
+  def getExtBindOps():List[ExtBindOp] = getOps[ExtBindOp]()
   def getGroupOps() = queue.collect { case e: GroupOp => e }
 }

@@ -13,7 +13,7 @@ import scala.util.Random
 /**
  * This will use the actual Flickr API via Flickr4Scala
  */
-class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = true) {
+class FlickrQueryExecutor(query: FlickrQuery, flickrConfig: File, debug: Boolean = true) {
   // identifier for the query, this might become a map, if we get
   // multiple queries in each other
   val ident = new Random().nextString(8)
@@ -30,7 +30,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   val peopleSearchOptions = Map("flickr.people.findByEmail" -> List(
     "find_email"
   ),
-  "flickr.people.findByUsername" -> List("username"))
+    "flickr.people.findByUsername" -> List("username"))
 
   val photoSearchOptions = Map("flickr.photos.search" -> List(
     "user_id",
@@ -77,46 +77,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   val outputMapping = Map("username" -> "owner")
 
   var searchables = Map[String, List[String]]()
-  var unsearchables = List[Op]()
+  var unsearchables = List[GetOp]()
   var filter = List[Op]()
 
-  def isGetOrBind(op: Op): Boolean = {
-    if (op.cmd equals "BIND")
-      true
-    else if (op.cmd equals "GET")
-      true
-    else false
-  }
-
-  def isGet(op: Op) = if (op.cmd equals "GET") true else false
-  def isBind(op: Op) = if (op.cmd equals "BIND") true else false
-  def isPrint(op: Op) = if (op.cmd equals "PRINT") true else false
-  def isExtBind(op: Op) = if (op.cmd equals "EXTBIND") true else false
-  def isAggr(op: Op) = if (op.cmd equals "AGGR") true else false
-  def isGroup(op: Op) = if (op.cmd equals "GROUP") true else false
-
-  def getGETCommands = queue.filter(op => isGet(op))
-  def getAggrOps = queue.filter(op => isAggr(op))
-  def getPrintOps = queue.filter(op => isPrint(op))
-
-  def hasAggregates = getAggrOps.nonEmpty
-
-  /**
-    * This method returns a list of all group operations.
-    */
-  def getGroupOps: List[Op] = queue.filter(op => isGroup(op))
-
-  /**
-    *  This method returns a list of all bind operations.
-    */
-  def getBindOps: List[Op] = queue.filter(op => isBind(op))
-
-  /**
-    * This method returns a list of all extend bind operations. Those
-    * are operations that bind a variable to the output of an
-    * aggregate function.
-    */
-  def getExtBindOps: List[Op] = queue.filter(op =>isExtBind(op))
+  def hasAggregates = query.getAggrOps.nonEmpty
 
   /**
     * The method will return the 'photos' part from the function
@@ -141,30 +105,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   }
 
   /**
-    * getSepPred returns a tuple consisting of the object and the
-    * member of a predicate. i.e.: photos#text => (photos,text)
-    */
-  def getSepPred(op: Op): (String, String) = {
-    val predExp = """(.*)#(.*)""".r
-    // check if the relevant part of the predicate is a
-    // possible search option in the flickr API
-    val (obj, member) = predExp.findFirstIn(op.pred) match {
-      case Some(predExp(u, m)) => (u, m)
-      // TODO: throw error here!
-      case None => ("", "")
-    }
-
-    // TODO: obj needs to be only "people" etc.
-    (obj, member)
-  }
-
-  /**
-    * Only return the name of the member specified in the SPARQL query, i.e.:
-    * only return 'username' when 'people#username' was specified.
-    */
-  def getMemberName(op: Op): String = getSepPred(op)._2
-
-  /**
     * Returns true if there is at least one searchable element in the query,
     * false otherwise.
     */
@@ -180,8 +120,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     if (searchables.nonEmpty)
       return searchables
 
-    for (op <- getGETCommands) {
-      val (obj, member) = getSepPred(op)
+    for (op <- query.getGetOps) {
+      val (obj, member) = (op.obj, op.member)
       // this goes through all the functions in predicates
       for (f <- predicates(obj).keys) {
         println(s"looking for ${f}")
@@ -247,13 +187,13 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         if (debug)
           println(s"Execute mapping for: ${param}")
         val mappedParam = inputMapping(param)
-        val obj = getGETCommands.filter(
-          c => c.pred.contains(param)).map(c => c.obj).head
+        val obj = query.getGetOps.filter(
+          op => op.member.contains(param)).map(op => op.obj).head
         val mappedObj = getMappedObj(param, obj)
         result += mappedParam -> mappedObj
       } else
-        result += param -> getGETCommands.filter(
-          c => c.pred.contains(param)).map(c => c.obj).head
+        result += param -> query.getGetOps.filter(
+          op => op.member.contains(param)).map(op => op.obj).head
     }
 
     result
@@ -268,9 +208,9 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
 
     for (param <- searchables(func)) {
       if (inputMapping.contains(param)) {
-        val v = getGETCommands.filter(
-          c => c.pred.contains(param)
-        ).map(c => c.obj).head
+        val v = query.getGetOps.filter(
+          op => op.member.contains(param)
+        ).map(op => op.obj).head
         result += param -> v
       }
     }
@@ -284,7 +224,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     */
   def getAttrNameFromExtBind(printVar: String): Option[Op] = {
     // list of Ops binding a PRINT variable to a temp variable like ?.0
-    val extBindOps = getExtBindOps.filter(op => op.obj == printVar)
+    val extBindOps = query.getExtBindOps.filter(op => op.member == printVar)
 
     if (extBindOps.size > 1) {
       println("Error: Number of extended binds is higher than one!")
@@ -296,7 +236,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       return Option(null)
     }
 
-    val aggrOps = getAggrOps.filter(op => op.subj == extBindOps.head.subj)
+    val aggrOps = query.getAggrOps.filter(op => op.subj == extBindOps.head.subj)
 
     if (aggrOps.size > 1) {
       println("Error: Number of aggregates for given variable name is higher than one!")
@@ -309,19 +249,19 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     }
 
     val aggr = aggrOps.head
-    val bindOps = getBindOps.filter(op => op.obj == aggr.obj)
+    val bindOps = query.getBindOps.filter(op => op.obj == aggr.member)
 
     Option(bindOps.head)
   }
 
   def checkForProperExtBind(printVar: String): Boolean = {
     // list of Ops binding a PRINT variable to a temp variable like ?.0
-    val extBinds = getExtBindOps.filter(op => op.obj == printVar)
+    val extBinds = query.getExtBindOps.filter(op => op.member == printVar)
 
     for (bindOp <- extBinds) {
       // list of temp variables like ?.0 to a function and a variable
       // name from the where clause
-      val aggrOps = getAggrOps.filter(op => op.subj == bindOp.subj)
+      val aggrOps = query.getAggrOps.filter(op => op.subj == bindOp.subj)
 
       if (aggrOps.size > 1) {
         println("Too many bindings from EXTBIND to AGGR.")
@@ -332,7 +272,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         return false
 
       // FIXME: what if it isn't a bind to obj but to subj?
-      if (!getBindOps.exists(op => op.obj == aggrOps.head.obj)) {
+      if (!query.getBindOps.exists(op => op.obj == aggrOps.head.member)) {
         return false
       }
     }
@@ -347,11 +287,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     * Is this actually part of the shitty SPARQL query standard?
     */
   def checkOutputFields: Boolean = {
-    val binds = getBindOps
-    val extBinds = getExtBindOps
-    for (field <- getPrintOps.map(op => op.obj)) {
+    val binds = query.getBindOps
+    val extBinds = query.getExtBindOps
+    for (field <- query.getPrintOps.map(op => op.member)) {
       if (!binds.exists(op => op.obj == field))
-        if (!extBinds.exists(op => op.obj == field))
+        if (!extBinds.exists(op => op.member == field))
           return false
         else
           if (!checkForProperExtBind(field))
@@ -369,7 +309,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     */
   def getFieldsObj: MongoDBObject = {
     // list of fields, excluding all those that need to be mapped to another value
-    val fields = getPrintOps.map(op => op.obj)
+    val fields = query.getPrintOps.map(op => op.member)
 
     if (debug) {
       println("Fields:")
@@ -384,8 +324,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
    */
   def getFilterObj(pred: String): MongoDBObject = {
     val queryData = unsearchables.filter(
-      op => op.pred.contains(pred)).map(
-      op => getMemberName(op) -> op.obj) :+ "ident" -> ident
+      op => op.obj.contains(pred)).map(
+      op => op.member -> op.obj) :+ "ident" -> ident
 
     val mongoObj = MongoDBObject.empty
     queryData.foreach(d => mongoObj += d)
@@ -403,7 +343,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     *  save in the MongoDB database
     */
   def execute: Unit = {
-    val getCommands = getGETCommands
+    val getCommands = query.getGetOps
     val searchables = getSearchablesByMethod
 
     if (!hasSearchables) {
@@ -443,7 +383,7 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
         // get the total number of return values
         val testResp = f.call(methodName = func,
           parameters ++ getMappedParamsForFunc(func) ++ Map("per_page" -> "1"))
-        val total = testResp.total.asInstanceOf[String].toInt
+        val total = testResp.get.total.asInstanceOf[String].toInt
         println(s"Total: ${total}")
         val perPage = 1
 
@@ -452,10 +392,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
           val nextPage = randFunc(total, 1)
           resp = f.callPage(methodName = func,
             parameters ++ getMappedParamsForFunc(func) ++ Map(
-              "per_page" -> perPage.toString), new FlickrResponse(), nextPage)
+              "per_page" -> perPage.toString), new FlickrResponse(), nextPage).get
         }
       } else
-        resp = f.call(methodName = func, parameters ++ getMappedParamsForFunc(func))
+        resp = f.call(methodName = func, parameters ++ getMappedParamsForFunc(func)).get
 
       if (!resp.map.contains("code"))
           addRespToMongo(getObjFromFunc(func), resp)
@@ -472,11 +412,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       if (!(username equals "")) {
         val resp = f.call(methodName = "flickr.people.findByUsername",
           parameters = Map("username" -> username))
-        resp.id.asInstanceOf[String]
+        resp.get.id.asInstanceOf[String]
       } else if (!(email equals "")) {
         val resp = f.call(methodName = "flickr.people.findByEmail",
           parameters = Map("find_email" -> email))
-        resp.id.asInstanceOf[String]
+        resp.get.id.asInstanceOf[String]
       } else {
         // FIXME: throw error
         ""
@@ -541,7 +481,8 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
    * possibility to fetch as much data as he wants.
    */
   def getResults(format: String = "json"): Option[Iterator[DBObject]] = {
-    val collName = getSepPred(getGETCommands.head)._1
+    // FIXME
+    val collName = query.getGetOps.head.obj
     // if the query is a "SELECT * ..." fields will be empty which
     // will result in all the data being returned
     val fields = getFieldsObj
@@ -557,13 +498,13 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     /* what we need: the output name, the function, the orginal
      * value/(variable name) to apply the function on */
     if (hasAggregates) {
-      for (aggr <- getAggrOps) {
+      for (aggr <- query.getAggrOps) {
         val func = aggr.func.toLowerCase
-        val outputName = getExtBindOps.filter(op => op.subj == aggr.subj).head.obj
-        val attrName = getAttrNameFromExtBind(outputName).get.obj
+        val outputName = query.getExtBindOps.filter(op => op.subj == aggr.subj).head.member
+        val attrName = getAttrNameFromExtBind(outputName).get
         println(s"func: ${func} outputName: ${outputName} attrName: ${attrName}")
 
-        val groupVar = getGroupOps.head.obj
+        val groupVar = query.getGroupOps.head.member
         val aggregationOptions = AggregationOptions(AggregationOptions.CURSOR)
         val ret = coll.aggregate(List(MongoDBObject(
           "$group" -> MongoDBObject(

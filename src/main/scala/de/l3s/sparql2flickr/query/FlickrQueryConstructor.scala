@@ -11,8 +11,8 @@ class FlickrQueryConstructor {
   // if subject and object begin with '?' it's just naming a variable for later use
   // if object(?) is in quotation marks, it's a "filter". the actual filter comes later in the syntax tho,
   // but we might want to execute it before to minimize API load
-  def addBGP(op : OpBGP) {
-    def handleTriple(t : Triple) = {
+  def addBGP(op: OpBGP) {
+    def handleTriple(t: Triple) = {
       val predExp = """(.*)[#/](.*)""".r
       // FIXME: for now we only support predicates like:
       //        http://l3s.de/flickr/people#username
@@ -71,12 +71,12 @@ class FlickrQueryConstructor {
   }
 
   // this creates the PRINT ops for all the aggregate functions
-  def addProject(op : OpProject) {
+  def addProject(op: OpProject) {
     val vars = op.getVars
     vars foreach (v => fq.add(PrintOp(member=v.toString.replace("?", ""))))
   }
 
-  def addFilter(op : OpFilter) {
+  def addFilter(op: OpFilter) {
     val exprs = op.getExprs.getList
     exprs foreach (e => fq.add(FilterOp(
       member = e.getVarsMentioned.head.toString.replace("?", ""),
@@ -85,7 +85,7 @@ class FlickrQueryConstructor {
       )))
   }
 
-  def nextOp(op : Any) = op match {
+  def nextOp(op: Any) = op match {
     case op:OpBGP => addBGP(op)
     case op:OpProject => addProject(op)
     case op:OpFilter => addFilter(op)
