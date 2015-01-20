@@ -87,10 +87,13 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
   def isBind(op: Op) = if (op.cmd equals "BIND") true else false
   def isPrint(op: Op) = if (op.cmd equals "PRINT") true else false
   def isExtBind(op: Op) = if (op.cmd equals "EXTBIND") true else false
+  def isAggr(op: Op) = if (op.cmd equals "AGGR") true else false
 
   def getGETCommands = queue.filter(op => isGet(op))
-
+  def getAggrOps = queue.filter(op => isAggr(op))
   def getPrintOps = queue.filter(op => isPrint(op))
+
+  def hasAggregates = getAggrOps.nonEmpty
 
   /**
     *  This method returns a list of all bind operations.
@@ -237,6 +240,10 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
+  /**
+    * The getMappedparamsForFunc method returns a map of (param ->
+    * value) arguments for a specific function of the Flickr REST API.
+    */
   def getMappedParamsForFunc(func: String): Map[String,String] = {
     var result = Map[String, String]().empty
 
@@ -252,8 +259,29 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     result
   }
 
-  // TODO: well, write the method...
-  def checkForProperExtBind(fieldVar: String): Boolean = {
+  def checkForProperExtBind(printVar: String): Boolean = {
+    // list of Ops binding a PRINT variable to a temp variable like ?.0
+    val extBinds = getExtBindOps.filter(op => op.obj == printVar)
+
+    for (bindOp <- extBinds) {
+      // list of temp variables like ?.0 to a function and a variable
+      // name from the where clause
+      val aggrOps = getAggrOps.filter(op => op.subj == bindOp.subj)
+
+      if (aggrOps.size > 1) {
+        println("Too many bindings from EXTBIND to AGGR.")
+        return false
+      }
+
+      if (aggrOps.size == 0)
+        return false
+
+      // FIXME: what if it isn't a bind to obj but to subj?
+      if (!getBindOps.exists(op => op.obj == aggrOps.head.obj)) {
+        return false
+      }
+    }
+
     true
   }
 
@@ -296,7 +324,6 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
       println(fields)
     }
     // also generally exclude the '_id' field, it's useless for us!
-    // TODO: check if this works
     MongoDBObject(fields.map(f => f -> 1) ++ Map("_id" -> 0))
   }
 
@@ -441,8 +468,11 @@ class FlickrQueryExecutor(queue: List[Op], flickrConfig: File, debug: Boolean = 
     // will result in all the data being returned
     val fields = getFieldsObj
     val filter = getFilterObj("photos")
-
     val coll = flickrDB("photos")
+
+    if (hasAggregates) {
+
+    }
 
     for (f <- coll.find(filter, fields)) {
       println(f)
