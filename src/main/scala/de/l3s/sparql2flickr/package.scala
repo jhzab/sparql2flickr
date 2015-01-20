@@ -17,7 +17,7 @@ package object sparql2flickr {
     //val query = "PREFIX vcard:      <http://www.l3s.de/sparql-flickr-people/1.0#> SELECT ?y ?givenName WHERE { ?y vcard:Family \"Smith\" . ?y vcard:Given  ?givenName . FILTER ( ?givenName < 20 ) }"
 //    val query = "PREFIX  p:  <http://l3s.de/flickr/people#>\nSELECT  ?username ?price\nWHERE   { ?x p:price ?price .\n          FILTER (?price < 30.5)\n          ?x p:username ?username .\n ?x p:username \"zabjanhendrik\" . }"
 
-    val query = "PREFIX p: <http://l3s.de/flickr/photos#>\nSELECT (SUM(?views) AS ?viewcount) (COUNT(?x) AS ?count) \nWHERE { ?x p:views ?views .\n?x p:username ?username .\n?x p:username \"zabjanhendrik\" . } GROUP BY ?x"
+    val query = "PREFIX p: <http://l3s.de/flickr/photos#>\nSELECT (SUM(?views) AS ?viewcount)\nWHERE { ?x p:views ?views .\n?x p:username ?username .\n?x p:username \"zabjanhendrik\" . } GROUP BY ?x"
 
     val parsedQuery = QueryFactory.create(query)
     val op = Algebra.compile(parsedQuery)
